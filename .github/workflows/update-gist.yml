@@ -14,9 +14,9 @@ jobs:
         run: |
           curl -fsSL \
             "https://orange-mountain-1d16.hninisiimoo.workers.dev/" \
-            -o working_configs.txt
+            -o servers.txt
 
-      - name: Update Gist
+      - name: Update servers.txt in Gist
         env:
           GH_TOKEN: ${{ secrets.GIST_TOKEN }}
         run: |
@@ -28,12 +28,12 @@ jobs:
           gist_id = "4150f35af6dbfb31985573a26d7c9c8e"
           token = os.environ["GH_TOKEN"]
 
-          with open("working_configs.txt", "r", encoding="utf-8") as f:
+          with open("servers.txt", "r", encoding="utf-8") as f:
               content = f.read()
 
           data = {
               "files": {
-                  "working_configs.txt": {
+                  "servers.txt": {
                       "content": content
                   }
               }
@@ -52,6 +52,6 @@ jobs:
           )
 
           with urllib.request.urlopen(request) as response:
-              print("Gist updated successfully!")
-              print(response.status)
+              print("servers.txt updated successfully!")
+              print("HTTP status:", response.status)
           PY
