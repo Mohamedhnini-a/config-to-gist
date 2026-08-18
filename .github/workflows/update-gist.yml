@@ -24,7 +24,7 @@ jobs:
           import json
           import os
           import urllib.request
-          from datetime import datetime
+          from datetime import datetime, timedelta, timezone
 
           GIST_ID = "4150f35af6dbfb31985573a26d7c9c8e"
           FILE_NAME = "servers.txt"
@@ -109,12 +109,12 @@ jobs:
           )
 
           # ==========================================
-          # 4. Remove ONLY our Update config
+          # 4. Remove ONLY our Last Update config
           #    for comparison
           # ==========================================
 
           UPDATE_PREFIX = (
-              "trojan://humanity@1.c:443"
+              "trojan://humanity@Sii.Moo:443"
           )
 
           def remove_update_config(content):
@@ -129,7 +129,7 @@ jobs:
 
                   if (
                       stripped.startswith(UPDATE_PREFIX)
-                      and "#Update-" in stripped
+                      and "#Last%20Update%20" in stripped
                   ):
                       continue
 
@@ -154,7 +154,7 @@ jobs:
               print("================================")
               print("NO CHANGE")
               print("Worker content is unchanged.")
-              print("Keeping existing Update config.")
+              print("Keeping existing Last Update config.")
               print("================================")
 
           else:
@@ -164,45 +164,63 @@ jobs:
               print("================================")
               print("CHANGE DETECTED")
               print("Worker content has changed.")
-              print("Creating new Update config.")
+              print("Creating new Last Update config.")
               print("================================")
 
           # ==========================================
-          # 6. If changed -> create new Update config
+          # 6. If changed -> create new Last Update config
           # ==========================================
 
           if changed:
 
-              now = datetime.now().astimezone()
+              # Morocco time = UTC+1
+              morocco_tz = timezone(
+                  timedelta(hours=1)
+              )
 
-              time_part = now.strftime("%H:%M")
-              date_part = now.strftime("%d/%m/%Y")
+              now = datetime.now(
+                  morocco_tz
+              )
+
+              date_part = now.strftime(
+                  "%d/%m/%Y"
+              )
+
+              time_part = now.strftime(
+                  "%H:%M"
+              )
 
               # Encode : and /
               #
-              # 18:20 -> 18%3A20
+              # 18:16 -> 18%3A16
               # 18/08/2026 -> 18%2F08%2F2026
 
               timestamp = (
-                  time_part.replace(":", "%3A")
-                  + "-"
-                  + date_part.replace("/", "%2F")
+                  date_part.replace(
+                      "/",
+                      "%2F"
+                  )
+                  + "%20at%20"
+                  + time_part.replace(
+                      ":",
+                      "%3A"
+                  )
               )
 
               update_config = (
-                  "trojan://humanity@1.c:443"
+                  "trojan://humanity@Sii.Moo:443"
                   "?security=tls"
-                  "&sni=1.c"
+                  "&sni=sii.moo"
                   "&insecure=0"
                   "&allowInsecure=0"
                   "&type=ws"
-                  "&host=1.c"
+                  "&host=sii.moo"
                   "&path=%2F"
-                  f"#Update-{timestamp}"
+                  f"#Last%20Update%20{timestamp}"
               )
 
               print("")
-              print("New Update config:")
+              print("New Last Update config:")
               print(update_config)
               print("")
 
@@ -219,7 +237,7 @@ jobs:
               # NO CHANGE
               #
               # Keep the COMPLETE old servers.txt
-              # including the old Update config.
+              # including the old Last Update config.
               # ======================================
 
               final_content = old_content
@@ -238,7 +256,9 @@ jobs:
 
           update_request = urllib.request.Request(
               API_URL,
-              data=json.dumps(payload).encode("utf-8"),
+              data=json.dumps(
+                  payload
+              ).encode("utf-8"),
               method="PATCH",
               headers={
                   "Authorization": f"Bearer {TOKEN}",
