@@ -10,45 +10,48 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Download working configs
+      - name: Get content from Worker
         run: |
-          curl -L \
-            "https://raw.githubusercontent.com/Mohamedhnini-a/testeur/refs/heads/main/working_configs.txt" \
+          curl -fsSL \
+            "https://orange-mountain-1d16.hninisiimoo.workers.dev/" \
             -o working_configs.txt
 
       - name: Update Gist
         env:
-          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+          GH_TOKEN: ${{ secrets.GIST_TOKEN }}
         run: |
-          python - <<'PY'
+          python3 - <<'PY'
           import json
           import os
           import urllib.request
 
-          token = os.environ["GIST_TOKEN"]
+          gist_id = "4150f35af6dbfb31985573a26d7c9c8e"
+          token = os.environ["GH_TOKEN"]
 
           with open("working_configs.txt", "r", encoding="utf-8") as f:
               content = f.read()
 
-          data = json.dumps({
+          data = {
               "files": {
                   "working_configs.txt": {
                       "content": content
                   }
               }
-          }).encode("utf-8")
+          }
 
           request = urllib.request.Request(
-              "https://api.github.com/gists/4150f35af6dbfb31985573a26d7c9c8e",
-              data=data,
-              method="PATCH"
+              f"https://api.github.com/gists/{gist_id}",
+              data=json.dumps(data).encode("utf-8"),
+              method="PATCH",
+              headers={
+                  "Authorization": f"Bearer {token}",
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+                  "Content-Type": "application/json",
+              },
           )
 
-          request.add_header("Authorization", f"Bearer {token}")
-          request.add_header("Accept", "application/vnd.github+json")
-          request.add_header("X-GitHub-Api-Version", "2022-11-28")
-          request.add_header("Content-Type", "application/json")
-
           with urllib.request.urlopen(request) as response:
-              print("Gist updated successfully:", response.status)
+              print("Gist updated successfully!")
+              print(response.status)
           PY
