@@ -14,9 +14,9 @@ jobs:
         run: |
           curl -fsSL \
             "https://orange-mountain-1d16.hninisiimoo.workers.dev/" \
-            -o servers.txt
+            -o new_servers.txt
 
-      - name: Update servers.txt in Gist
+      - name: Compare and Update Gist
         env:
           GH_TOKEN: ${{ secrets.GIST_TOKEN }}
         run: |
@@ -24,34 +24,240 @@ jobs:
           import json
           import os
           import urllib.request
+          from datetime import datetime
 
-          gist_id = "4150f35af6dbfb31985573a26d7c9c8e"
-          token = os.environ["GH_TOKEN"]
+          GIST_ID = "4150f35af6dbfb31985573a26d7c9c8e"
+          FILE_NAME = "servers.txt"
+          TOKEN = os.environ["GH_TOKEN"]
 
-          with open("servers.txt", "r", encoding="utf-8") as f:
-              content = f.read()
+          API_URL = f"https://api.github.com/gists/{GIST_ID}"
 
-          data = {
+          # ==========================================
+          # 1. Get current servers.txt from Gist
+          # ==========================================
+
+          request = urllib.request.Request(
+              API_URL,
+              headers={
+                  "Authorization": f"Bearer {TOKEN}",
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
+          )
+
+          with urllib.request.urlopen(request) as response:
+              gist_data = json.loads(
+                  response.read().decode("utf-8")
+              )
+
+          files = gist_data.get("files", {})
+
+          if FILE_NAME not in files:
+              raise Exception(
+                  f"{FILE_NAME} was not found in the Gist"
+              )
+
+          gist_file = files[FILE_NAME]
+
+          # ==========================================
+          # 2. Get old content
+          # ==========================================
+
+          if gist_file.get("truncated", False):
+
+              raw_url = gist_file["raw_url"]
+
+              raw_request = urllib.request.Request(
+                  raw_url,
+                  headers={
+                      "Authorization": f"Bearer {TOKEN}",
+                  },
+              )
+
+              with urllib.request.urlopen(raw_request) as response:
+                  old_content = response.read().decode("utf-8")
+
+          else:
+
+              old_content = gist_file.get(
+                  "content",
+                  ""
+              )
+
+          # ==========================================
+          # 3. Get new Worker content
+          # ==========================================
+
+          with open(
+              "new_servers.txt",
+              "r",
+              encoding="utf-8"
+          ) as f:
+              new_content = f.read()
+
+          # Normalize line endings
+          old_content = (
+              old_content
+              .replace("\r\n", "\n")
+              .replace("\r", "\n")
+          )
+
+          new_content = (
+              new_content
+              .replace("\r\n", "\n")
+              .replace("\r", "\n")
+          )
+
+          # ==========================================
+          # 4. Remove ONLY our Update config
+          #    for comparison
+          # ==========================================
+
+          UPDATE_PREFIX = (
+              "trojan://humanity@1.c:443"
+          )
+
+          def remove_update_config(content):
+
+              lines = content.splitlines()
+
+              result = []
+
+              for line in lines:
+
+                  stripped = line.strip()
+
+                  if (
+                      stripped.startswith(UPDATE_PREFIX)
+                      and "#Update-" in stripped
+                  ):
+                      continue
+
+                  result.append(stripped)
+
+              return "\n".join(result).strip()
+
+          old_for_compare = remove_update_config(
+              old_content
+          )
+
+          new_for_compare = new_content.strip()
+
+          # ==========================================
+          # 5. Compare Worker with Gist
+          # ==========================================
+
+          if old_for_compare == new_for_compare:
+
+              changed = False
+
+              print("================================")
+              print("NO CHANGE")
+              print("Worker content is unchanged.")
+              print("Keeping existing Update config.")
+              print("================================")
+
+          else:
+
+              changed = True
+
+              print("================================")
+              print("CHANGE DETECTED")
+              print("Worker content has changed.")
+              print("Creating new Update config.")
+              print("================================")
+
+          # ==========================================
+          # 6. If changed -> create new Update config
+          # ==========================================
+
+          if changed:
+
+              now = datetime.now().astimezone()
+
+              time_part = now.strftime("%H:%M")
+              date_part = now.strftime("%d/%m/%Y")
+
+              # Encode : and /
+              #
+              # 18:20 -> 18%3A20
+              # 18/08/2026 -> 18%2F08%2F2026
+
+              timestamp = (
+                  time_part.replace(":", "%3A")
+                  + "-"
+                  + date_part.replace("/", "%2F")
+              )
+
+              update_config = (
+                  "trojan://humanity@1.c:443"
+                  "?security=tls"
+                  "&sni=1.c"
+                  "&insecure=0"
+                  "&allowInsecure=0"
+                  "&type=ws"
+                  "&host=1.c"
+                  "&path=%2F"
+                  f"#Update-{timestamp}"
+              )
+
+              print("")
+              print("New Update config:")
+              print(update_config)
+              print("")
+
+              # Update config goes FIRST
+              final_content = (
+                  update_config
+                  + "\n"
+                  + new_content.lstrip()
+              )
+
+          else:
+
+              # ======================================
+              # NO CHANGE
+              #
+              # Keep the COMPLETE old servers.txt
+              # including the old Update config.
+              # ======================================
+
+              final_content = old_content
+
+          # ==========================================
+          # 7. Update servers.txt in Gist
+          # ==========================================
+
+          payload = {
               "files": {
-                  "servers.txt": {
-                      "content": content
+                  FILE_NAME: {
+                      "content": final_content
                   }
               }
           }
 
-          request = urllib.request.Request(
-              f"https://api.github.com/gists/{gist_id}",
-              data=json.dumps(data).encode("utf-8"),
+          update_request = urllib.request.Request(
+              API_URL,
+              data=json.dumps(payload).encode("utf-8"),
               method="PATCH",
               headers={
-                  "Authorization": f"Bearer {token}",
+                  "Authorization": f"Bearer {TOKEN}",
                   "Accept": "application/vnd.github+json",
                   "X-GitHub-Api-Version": "2022-11-28",
                   "Content-Type": "application/json",
               },
           )
 
-          with urllib.request.urlopen(request) as response:
-              print("servers.txt updated successfully!")
-              print("HTTP status:", response.status)
+          with urllib.request.urlopen(
+              update_request
+          ) as response:
+
+              print("")
+              print("================================")
+              print("GIST UPDATED SUCCESSFULLY")
+              print(
+                  "HTTP status:",
+                  response.status
+              )
+              print("================================")
           PY
