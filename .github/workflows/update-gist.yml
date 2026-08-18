@@ -3,7 +3,7 @@ name: Update Gist
 on:
   workflow_dispatch:
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "0 */4 * * *"
 
 jobs:
   update-gist:
