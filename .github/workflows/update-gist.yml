@@ -10,17 +10,53 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Get content from Worker
+      - name: Get content from GitHub sources
         run: |
-          curl -fsSL \
-            "https://orange-mountain-1d16.hninisiimoo.workers.dev/" \
-            -o new_servers.txt
+          set -e
 
-          # Prevent empty Worker responses
+          SOURCES=(
+            "https://github.com/Mohamedhnini-a/testeur-2/raw/refs/heads/main/working_configs.txt"
+            "https://github.com/Mohamedhnini-a/testeur/raw/refs/heads/main/working_configs.txt"
+            "https://github.com/williamnecoo1-pixel/reality-2/raw/refs/heads/main/working_configs.txt"
+            "https://github.com/williamnecoo1-pixel/reality/raw/refs/heads/main/working_configs.txt"
+          )
+
+          > new_servers.txt
+
+          for URL in "${SOURCES[@]}"; do
+            echo "Fetching: $URL"
+
+            TEMP_FILE=$(mktemp)
+
+            if curl -fsSL --retry 3 --retry-delay 2 \
+              "$URL" -o "$TEMP_FILE"; then
+
+              if [ -s "$TEMP_FILE" ]; then
+                cat "$TEMP_FILE" >> new_servers.txt
+                printf '\n' >> new_servers.txt
+                echo "SUCCESS: $URL"
+              else
+                echo "ERROR: Empty source: $URL"
+                exit 1
+              fi
+
+            else
+              echo "ERROR: Failed source: $URL"
+              exit 1
+            fi
+
+            rm -f "$TEMP_FILE"
+          done
+
           if [ ! -s new_servers.txt ]; then
-            echo "ERROR: Worker returned an empty file."
+            echo "ERROR: No content collected."
             exit 1
           fi
+
+          echo "================================"
+          echo "ALL SOURCES DOWNLOADED"
+          echo "Total lines: $(wc -l < new_servers.txt)"
+          echo "================================"
 
       - name: Compare and Update Gist
         env:
@@ -66,10 +102,11 @@ jobs:
           gist_file = files[FILE_NAME]
 
           # ==========================================
-          # 2. Get complete old content
+          # 2. Get old content
           # ==========================================
 
           if gist_file.get("truncated", False):
+
               raw_url = gist_file["raw_url"]
 
               raw_request = urllib.request.Request(
@@ -81,21 +118,27 @@ jobs:
 
               with urllib.request.urlopen(raw_request) as response:
                   old_content = response.read().decode("utf-8")
+
           else:
               old_content = gist_file.get("content", "")
 
           # ==========================================
-          # 3. Get Worker content EXACTLY as returned
+          # 3. Read all collected sources
           # ==========================================
 
-          with open("new_servers.txt", "r", encoding="utf-8") as f:
+          with open(
+              "new_servers.txt",
+              "r",
+              encoding="utf-8"
+          ) as f:
               new_content = f.read()
 
-          # Protect against empty or whitespace-only responses
           if not new_content.strip():
-              raise Exception("Worker returned empty content. Gist NOT updated.")
+              raise Exception(
+                  "Collected content is empty. Gist NOT updated."
+              )
 
-          # Normalize line endings ONLY
+          # Normalize line endings only
           old_normalized = (
               old_content
               .replace("\r\n", "\n")
@@ -109,17 +152,20 @@ jobs:
           )
 
           # ==========================================
-          # 4. Remove only Last Update config for comparison
+          # 4. Remove ONLY Last Update for comparison
           # ==========================================
 
-          UPDATE_PREFIX = "trojan://humanity@Sii.Moo:443"
+          UPDATE_PREFIX = (
+              "trojan://humanity@Sii.Moo:443"
+          )
 
           def remove_update_config(content):
-              lines = content.splitlines()
 
+              lines = content.splitlines()
               result = []
 
               for line in lines:
+
                   stripped = line.strip()
 
                   if (
@@ -132,7 +178,10 @@ jobs:
 
               return "\n".join(result).strip()
 
-          old_for_compare = remove_update_config(old_normalized)
+          old_for_compare = remove_update_config(
+              old_normalized
+          )
+
           new_for_compare = new_normalized.strip()
 
           # ==========================================
@@ -140,35 +189,43 @@ jobs:
           # ==========================================
 
           if old_for_compare == new_for_compare:
+
               changed = False
 
               print("================================")
               print("NO CHANGE")
-              print("Worker content is unchanged.")
-              print("Keeping existing Gist completely.")
+              print("All sources are unchanged.")
+              print("Keeping existing Gist.")
               print("================================")
 
           else:
+
               changed = True
 
               print("================================")
               print("CHANGE DETECTED")
-              print("Worker content has changed.")
+              print("Updating Gist.")
               print("================================")
 
           # ==========================================
-          # 6. Build final content
+          # 6. Create final content
           # ==========================================
 
           if changed:
 
-              # Morocco time UTC+1
-              morocco_tz = timezone(timedelta(hours=1))
+              morocco_tz = timezone(
+                  timedelta(hours=1)
+              )
 
               now = datetime.now(morocco_tz)
 
-              date_part = now.strftime("%d/%m/%Y")
-              time_part = now.strftime("%H:%M")
+              date_part = now.strftime(
+                  "%d/%m/%Y"
+              )
+
+              time_part = now.strftime(
+                  "%H:%M"
+              )
 
               timestamp = (
                   date_part.replace("/", "%2F")
@@ -188,18 +245,21 @@ jobs:
                   f"#Last%20Update%20{timestamp}"
               )
 
-              # Worker content is preserved without filtering,
-              # renaming, sorting, or removing duplicates.
+              # Last Update goes FIRST
+              # All source contents remain unchanged
 
               final_content = (
-                  update_config + "\n" + new_content
+                  update_config
+                  + "\n"
+                  + new_content
               )
 
           else:
+
               final_content = old_content
 
           # ==========================================
-          # 7. Update Gist
+          # 7. Update Gist only if changed
           # ==========================================
 
           if changed:
@@ -214,7 +274,9 @@ jobs:
 
               update_request = urllib.request.Request(
                   API_URL,
-                  data=json.dumps(payload).encode("utf-8"),
+                  data=json.dumps(
+                      payload
+                  ).encode("utf-8"),
                   method="PATCH",
                   headers={
                       "Authorization": f"Bearer {TOKEN}",
@@ -224,7 +286,10 @@ jobs:
                   },
               )
 
-              with urllib.request.urlopen(update_request) as response:
+              with urllib.request.urlopen(
+                  update_request
+              ) as response:
+
                   print("")
                   print("================================")
                   print("GIST UPDATED SUCCESSFULLY")
