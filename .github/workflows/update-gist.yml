@@ -15,6 +15,7 @@ jobs:
           set -e
 
           SOURCES=(
+            "https://github.com/williamnecoo1-pixel/-testeur-X/raw/refs/heads/main/working.txt"
             "https://github.com/Mohamedhnini-a/testeur-2/raw/refs/heads/main/working_configs.txt"
             "https://github.com/Mohamedhnini-a/testeur/raw/refs/heads/main/working_configs.txt"
             "https://github.com/williamnecoo1-pixel/reality-2/raw/refs/heads/main/working_configs.txt"
