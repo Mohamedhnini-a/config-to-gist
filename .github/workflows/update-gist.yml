@@ -65,14 +65,95 @@ jobs:
           python3 - <<'PY'
           import json
           import os
+          import re
+          import base64
           import urllib.request
           from datetime import datetime, timedelta, timezone
 
           GIST_ID = "4150f35af6dbfb31985573a26d7c9c8e"
           FILE_NAME = "servers.txt"
           TOKEN = os.environ["GH_TOKEN"]
+          NEW_IP = "104.18.37.127"
 
           API_URL = f"https://api.github.com/gists/{GIST_ID}"
+
+          # ==========================================
+          # 0. Helper: change host/IP of a config line
+          # ==========================================
+
+          def change_ip_in_config(line):
+              """Change the host/address part of a config to NEW_IP.
+              Non-config lines (comments, blanks) are returned unchanged.
+              Unknown formats are left as-is (safe fallback).
+              """
+              stripped = line.strip()
+              if not stripped or stripped.startswith("#"):
+                  return line
+
+              # ---- vmess:// (base64-encoded JSON) ----
+              if stripped.startswith("vmess://"):
+                  try:
+                      payload = stripped[len("vmess://"):]
+                      fragment = ""
+                      if "#" in payload:
+                          payload, frag = payload.split("#", 1)
+                          fragment = "#" + frag
+                      pad = (-len(payload)) % 4
+                      padded = payload + "=" * pad
+                      decoded = base64.b64decode(padded).decode("utf-8")
+                      data = json.loads(decoded)
+                      if "add" in data:
+                          data["add"] = NEW_IP
+                      encoded = base64.b64encode(
+                          json.dumps(
+                              data,
+                              separators=(",", ":"),
+                              ensure_ascii=False,
+                          ).encode("utf-8")
+                      ).decode("utf-8").rstrip("=")
+                      return "vmess://" + encoded + fragment
+                  except Exception:
+                      return line
+
+              # ---- ss:// legacy: ss://base64(method:password@host:port)#name ----
+              if stripped.startswith("ss://") and "@" not in stripped.split("#")[0]:
+                  try:
+                      body = stripped[len("ss://"):]
+                      fragment = ""
+                      if "#" in body:
+                          body, frag = body.split("#", 1)
+                          fragment = "#" + frag
+                      pad = (-len(body)) % 4
+                      padded = body + "=" * pad
+                      decoded = base64.b64decode(padded).decode("utf-8")
+                      if "@" in decoded:
+                          creds, hostport = decoded.rsplit("@", 1)
+                          if ":" in hostport:
+                              host, port = hostport.rsplit(":", 1)
+                              new_decoded = creds + "@" + NEW_IP + ":" + port
+                              new_b64 = base64.b64encode(
+                                  new_decoded.encode("utf-8")
+                              ).decode("utf-8").rstrip("=")
+                              return "ss://" + new_b64 + fragment
+                  except Exception:
+                      pass
+                  return line
+
+              # ---- Generic URI: scheme://userinfo@host:port[/path][?query][#frag] ----
+              m = re.match(
+                  r'^([a-zA-Z][a-zA-Z0-9+.\-]*)://([^@/]+)@([^:/?#]+)'
+                  r'(:\d+)?(/[^?#]*)?(\?[^#]*)?(#.*)?$',
+                  stripped,
+              )
+              if m:
+                  scheme, userinfo, host, port, path, query, fragment = m.groups()
+                  return (
+                      f"{scheme}://{userinfo}@{NEW_IP}"
+                      f"{port or ''}{path or ''}{query or ''}{fragment or ''}"
+                  )
+
+              # Unknown format → leave unchanged
+              return line
 
           # ==========================================
           # 1. Get current Gist
@@ -88,16 +169,12 @@ jobs:
           )
 
           with urllib.request.urlopen(request) as response:
-              gist_data = json.loads(
-                  response.read().decode("utf-8")
-              )
+              gist_data = json.loads(response.read().decode("utf-8"))
 
           files = gist_data.get("files", {})
 
           if FILE_NAME not in files:
-              raise Exception(
-                  f"{FILE_NAME} was not found in the Gist"
-              )
+              raise Exception(f"{FILE_NAME} was not found in the Gist")
 
           gist_file = files[FILE_NAME]
 
@@ -106,19 +183,13 @@ jobs:
           # ==========================================
 
           if gist_file.get("truncated", False):
-
               raw_url = gist_file["raw_url"]
-
               raw_request = urllib.request.Request(
                   raw_url,
-                  headers={
-                      "Authorization": f"Bearer {TOKEN}",
-                  },
+                  headers={"Authorization": f"Bearer {TOKEN}"},
               )
-
               with urllib.request.urlopen(raw_request) as response:
                   old_content = response.read().decode("utf-8")
-
           else:
               old_content = gist_file.get("content", "")
 
@@ -126,107 +197,92 @@ jobs:
           # 3. Read all collected sources
           # ==========================================
 
-          with open(
-              "new_servers.txt",
-              "r",
-              encoding="utf-8"
-          ) as f:
-              new_content = f.read()
+          with open("new_servers.txt", "r", encoding="utf-8") as f:
+              new_content_raw = f.read()
+
+          if not new_content_raw.strip():
+              raise Exception("Collected content is empty. Gist NOT updated.")
+
+          new_normalized = (
+              new_content_raw
+              .replace("\r\n", "\n")
+              .replace("\r", "\n")
+          )
+
+          # ==========================================
+          # 4. Change IP of ALL source configs
+          #    (first config = Last Update line, added later, NOT touched here)
+          # ==========================================
+
+          processed_lines = []
+          for line in new_normalized.splitlines():
+              if line.strip() == "":
+                  processed_lines.append(line)
+              else:
+                  processed_lines.append(change_ip_in_config(line))
+
+          new_content = "\n".join(processed_lines)
 
           if not new_content.strip():
-              raise Exception(
-                  "Collected content is empty. Gist NOT updated."
-              )
+              raise Exception("Collected content is empty after processing. Gist NOT updated.")
 
-          # Normalize line endings only
+          # ==========================================
+          # 5. Normalize old content
+          # ==========================================
+
           old_normalized = (
               old_content
               .replace("\r\n", "\n")
               .replace("\r", "\n")
           )
 
-          new_normalized = (
-              new_content
-              .replace("\r\n", "\n")
-              .replace("\r", "\n")
-          )
-
           # ==========================================
-          # 4. Remove ONLY Last Update for comparison
+          # 6. Remove ONLY Last Update for comparison
           # ==========================================
 
-          UPDATE_PREFIX = (
-              "trojan://humanity@Sii.Moo:443"
-          )
+          UPDATE_PREFIX = "trojan://humanity@Sii.Moo:443"
 
           def remove_update_config(content):
-
               lines = content.splitlines()
               result = []
-
               for line in lines:
-
-                  stripped = line.strip()
-
-                  if (
-                      stripped.startswith(UPDATE_PREFIX)
-                      and "#Last%20Update%20" in stripped
-                  ):
+                  s = line.strip()
+                  if s.startswith(UPDATE_PREFIX) and "#Last%20Update%20" in s:
                       continue
-
                   result.append(line)
-
               return "\n".join(result).strip()
 
-          old_for_compare = remove_update_config(
-              old_normalized
-          )
-
-          new_for_compare = new_normalized.strip()
+          old_for_compare = remove_update_config(old_normalized)
+          new_for_compare = new_content.strip()
 
           # ==========================================
-          # 5. Compare
+          # 7. Compare
           # ==========================================
 
           if old_for_compare == new_for_compare:
-
               changed = False
-
               print("================================")
               print("NO CHANGE")
               print("All sources are unchanged.")
               print("Keeping existing Gist.")
               print("================================")
-
           else:
-
               changed = True
-
               print("================================")
               print("CHANGE DETECTED")
               print("Updating Gist.")
               print("================================")
 
           # ==========================================
-          # 6. Create final content
+          # 8. Create final content
+          #    Last Update config keeps Sii.Moo (unchanged)
           # ==========================================
 
           if changed:
-
-              morocco_tz = timezone(
-                  timedelta(hours=1)
-              )
-
+              morocco_tz = timezone(timedelta(hours=1))
               now = datetime.now(morocco_tz)
-
-              date_part = now.strftime(
-                  "%d/%m/%Y"
-              )
-
-              time_part = now.strftime(
-                  "%H:%M"
-              )
-
+              date_part = now.strftime("%d/%m/%Y")
+              time_part = now.strftime("%H:%M")
               timestamp = (
                   date_part.replace("/", "%2F")
                   + "%20at%20"
@@ -245,38 +301,23 @@ jobs:
                   f"#Last%20Update%20{timestamp}"
               )
 
-              # Last Update goes FIRST
-              # All source contents remain unchanged
-
-              final_content = (
-                  update_config
-                  + "\n"
-                  + new_content
-              )
-
+              final_content = update_config + "\n" + new_content
           else:
-
               final_content = old_content
 
           # ==========================================
-          # 7. Update Gist only if changed
+          # 9. Update Gist only if changed
           # ==========================================
 
           if changed:
-
               payload = {
                   "files": {
-                      FILE_NAME: {
-                          "content": final_content
-                      }
+                      FILE_NAME: {"content": final_content}
                   }
               }
-
               update_request = urllib.request.Request(
                   API_URL,
-                  data=json.dumps(
-                      payload
-                  ).encode("utf-8"),
+                  data=json.dumps(payload).encode("utf-8"),
                   method="PATCH",
                   headers={
                       "Authorization": f"Bearer {TOKEN}",
@@ -285,18 +326,12 @@ jobs:
                       "Content-Type": "application/json",
                   },
               )
-
-              with urllib.request.urlopen(
-                  update_request
-              ) as response:
-
+              with urllib.request.urlopen(update_request) as response:
                   print("")
                   print("================================")
                   print("GIST UPDATED SUCCESSFULLY")
                   print("HTTP status:", response.status)
                   print("================================")
-
           else:
               print("Gist update skipped. No changes detected.")
-
           PY
